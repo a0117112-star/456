@@ -1,72 +1,260 @@
-// 1. 修改解析邏輯：忽略「平時表現」
-function handleUpload() {
-    const file = document.getElementById('excel-input').files[0];
-    if(!file) return alert("請選擇檔案");
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏫 班級成績管理系統 - 穩定修正版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --p-pink: #ffafbd; --p-blue: #c2e9fb; --accent: #ff6b6b; --teacher: #4a69bd; --card-bg: rgba(255, 255, 255, 0.98); }
+        body { font-family: 'Noto Sans TC', sans-serif; background: linear-gradient(135deg, var(--p-pink) 0%, var(--p-blue) 100%); min-height: 100vh; margin: 0; display: flex; justify-content: center; align-items: center; padding: 15px; box-sizing: border-box; }
+        .card { background: var(--card-bg); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 700px; border: 5px solid white; position: relative; }
+        h1, h2 { text-align: center; color: #444; margin-top: 0; }
+        .section { display: none; animation: fadeIn 0.4s ease; }
+        .active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const workbook = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
-        db = {}; 
+        input { width: 100%; padding: 14px 20px; border: 2px solid #eee; border-radius: 50px; margin-bottom: 15px; box-sizing: border-box; outline: none; font-size: 1rem; transition: 0.3s; }
+        input:focus { border-color: var(--p-pink); }
+        button { padding: 12px 25px; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; transition: 0.3s; font-size: 1rem; color: white; }
+        .btn-full { width: 100%; margin-top: 10px; }
+        .btn-teacher { background: var(--teacher); }
+        .btn-student { background: var(--accent); }
         
-        const sheet1 = workbook.Sheets[workbook.SheetNames[0]];
-        className = sheet1['A1'] ? sheet1['A1'].v : "我的班級";
-        document.getElementById('admin-title').innerText = className;
+        .score-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 20px; }
+        .score-item { background: white; padding: 15px; border-radius: 20px; border: 1px solid #f0f0f0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+        .subj-name { font-size: 0.85rem; color: #888; display: block; margin-bottom: 5px; }
+        .subj-score { font-size: 1.4rem; color: var(--accent); font-weight: bold; }
 
-        const sheetCount = Math.min(workbook.SheetNames.length, 4);
-        for(let s = 0; s < sheetCount; s++) {
-            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[s]], {header: 1});
-            if(rows.length < 2) continue;
+        .scroll-table { max-height: 250px; overflow-y: auto; margin: 15px 0; border: 1px solid #eee; border-radius: 15px; background: white; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { border: 1px solid #eee; padding: 12px; text-align: center; }
+        th { background: #f8f9fa; position: sticky; top: 0; }
 
-            const headers = rows[1]; 
-            for(let i = 2; i < rows.length; i++) {
-                const r = rows[i];
-                if(!r[1]) continue;
-                const id = String(r[1]).trim();
+        .back-link { display: block; text-align: center; margin-top: 20px; color: #999; text-decoration: underline; cursor: pointer; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div id="sec-home" class="section active">
+        <div style="font-size: 4rem; text-align: center;">🦁</div>
+        <h1>班級成績查詢系統</h1>
+        <div style="display: flex; gap: 15px; margin-top: 25px;">
+            <button class="btn-teacher" style="flex:1;" onclick="navTo('sec-t-login')">教師登入</button>
+            <button class="btn-student" style="flex:1;" onclick="navTo('sec-s-login')">學生查詢</button>
+        </div>
+    </div>
+
+    <div id="sec-t-login" class="section">
+        <h2>👨‍🏫 教師後台</h2>
+        <input type="text" id="t-acc" placeholder="帳號 (m1113013)">
+        <input type="password" id="t-pwd" placeholder="教師密碼">
+        <button class="btn-full btn-teacher" onclick="authTeacher()">登入管理介面</button>
+        <span class="back-link" onclick="navTo('sec-home')">返回首頁</span>
+    </div>
+
+    <div id="sec-t-admin" class="section">
+        <h2 id="admin-title">尚未讀取資料</h2>
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 20px; margin-bottom: 15px;">
+            <b>上傳成績單 (Excel 前 4 分頁)</b>
+            <input type="file" id="excel-up" style="margin-top:10px;">
+            <button class="btn-full" style="background:#27ae60;" onclick="importExcel()">解析資料並過濾標題</button>
+        </div>
+        <div class="scroll-table">
+            <table id="st-list">
+                <thead><tr><th>學號</th><th>姓名</th><th>科目數</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <button style="background:#e67e22; flex:1;" onclick="exportXlsx()">匯出備份</button>
+            <button style="background:#9b59b6; flex:1;" onclick="modTPwd()">改管密碼</button>
+        </div>
+        <button class="btn-full" style="background:#adb5bd; margin-top:15px;" onclick="navTo('sec-home')">登出返回首頁</button>
+    </div>
+
+    <div id="sec-s-login" class="section">
+        <h2>🎒 學生查詢</h2>
+        <input type="text" id="s-id" placeholder="請輸入學號">
+        <input type="password" id="s-pwd" placeholder="密碼 (預設學號後3碼)">
+        <button class="btn-full btn-student" onclick="authStudent()">登入查詢成績</button>
+        <span class="back-link" onclick="navTo('sec-home')">返回首頁</span>
+    </div>
+
+    <div id="sec-s-report" class="section">
+        <h2 id="res-name" style="margin-bottom:5px; color:var(--accent);"></h2>
+        <p id="res-class" style="text-align:center; color:#999; margin-top:0;"></p>
+        <hr border="0" style="border-top:1px solid #eee; margin:20px 0;">
+        <div id="res-grid" class="score-grid"></div>
+        <div style="display:flex; gap:10px; margin-top:30px;">
+            <button style="background:#9b59b6; flex:1;" onclick="modSPwd()">修改查詢密碼</button>
+            <button style="background:#adb5bd; flex:1;" onclick="navTo('sec-home')">登出返回</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let db = {}; 
+    let currentClass = "未設定班級";
+    let masterPwd = localStorage.getItem('m_pwd') || 'a885960';
+
+    function navTo(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if(id === 'sec-home') {
+            document.querySelectorAll('input').forEach(i => i.value = "");
+        }
+    }
+
+    function authTeacher() {
+        const acc = document.getElementById('t-acc').value;
+        const pwd = document.getElementById('t-pwd').value;
+        if(acc === 'm1113013' && pwd === masterPwd) {
+            navTo('sec-t-admin');
+            document.getElementById('admin-title').innerText = currentClass;
+        } else { alert("帳號或密碼錯誤"); }
+    }
+
+    function importExcel() {
+        const f = document.getElementById('excel-up').files[0];
+        if(!f) return alert("請選取檔案");
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const wb = XLSX.read(data, {type: 'array'});
+                db = {};
                 
-                if(!db[id]) db[id] = { name: r[3], sex: r[2], scores: {} };
-                
-                for(let j = 4; j < r.length; j++) {
-                    const subjectName = headers[j];
-                    // --- 核心修改：忽略「平時表現」 ---
-                    if(subjectName && !subjectName.includes("平時表現")) {
-                        db[id].scores[subjectName] = r[j] !== undefined ? r[j] : '-';
+                const s1Name = wb.SheetNames[0];
+                const s1 = wb.Sheets[s1Name];
+                currentClass = s1['A1'] ? s1['A1'].v : "班級成績單";
+                document.getElementById('admin-title').innerText = currentClass;
+
+                const sheetLimit = Math.min(wb.SheetNames.length, 4);
+                for(let s = 0; s < sheetLimit; s++) {
+                    const sheet = wb.Sheets[wb.SheetNames[s]];
+                    const rows = XLSX.utils.sheet_to_json(sheet, {header: 1});
+                    
+                    if(rows.length < 2) continue;
+                    const headers = rows[1]; 
+                    
+                    for(let i = 2; i < rows.length; i++) {
+                        const r = rows[i];
+                        if(!r || !r[1]) continue; 
+                        
+                        const id = String(r[1]).trim();
+                        if(!db[id]) db[id] = { name: r[3] || "未知", sex: r[2] || "-", scores: {} };
+                        
+                        for(let j = 4; j < headers.length; j++) {
+                            const subjectName = String(headers[j] || "").trim();
+                            if(subjectName && !subjectName.includes("平時表現")) {
+                                db[id].scores[subjectName] = (r[j] !== undefined && r[j] !== null) ? r[j] : '-';
+                            }
+                        }
                     }
                 }
+                refreshAdminTable();
+                alert("✅ 解析成功！已整合分頁並過濾「平時表現」。");
+            } catch (err) {
+                console.error(err);
+                alert("讀取失敗，請確保 Excel 格式正確（第二列為標題）。");
             }
-        }
-        renderTable();
-        alert("讀取完畢！已過濾平時表現並整合科目。");
-    };
-    reader.readAsArrayBuffer(file);
-}
+        };
+        reader.readAsArrayBuffer(f);
+    }
 
-// 2. 修改顯示邏輯：將「段考」移至最後
-function authStudent() {
-    const id = document.getElementById('s-id').value.trim();
-    const pwd = document.getElementById('s-pwd').value.trim();
-    if(!db[id]) return alert("找不到此學號，請聯絡老師。");
-
-    const sp = localStorage.getItem('sp_'+id) || id.slice(-3);
-    if(pwd === sp) {
-        navTo('sec-s-report');
-        document.getElementById('res-name').innerText = db[id].name + " 同學";
-        document.getElementById('res-class').innerText = className + " | 學號：" + id;
-        
-        // --- 核心修改：排序邏輯 ---
-        let allKeys = Object.keys(db[id].scores);
-        let normalScores = allKeys.filter(k => !k.includes("段考")); // 非段考科目
-        let examScores = allKeys.filter(k => k.includes("段考"));   // 段考科目
-        
-        // 合併：普通科目在前，段考在後
-        let sortedKeys = [...normalScores, ...examScores];
-
-        let html = '';
-        sortedKeys.forEach(k => {
-            html += `<div class="score-item">
-                        <span class="subj-name">${k}</span>
-                        <span class="subj-score">${db[id].scores[k]}</span>
-                     </div>`;
+    function refreshAdminTable() {
+        const b = document.querySelector('#st-list tbody');
+        b.innerHTML = '';
+        Object.keys(db).forEach(id => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${id}</td><td>${db[id].name}</td><td>${Object.keys(db[id].scores).length}</td>
+                            <td><button onclick="manualEdit('${id}')" style="background:#555; padding:4px 8px; font-size:12px;">編輯</button></td>`;
+            b.appendChild(tr);
         });
-        document.getElementById('res-grid').innerHTML = html || '<p style="grid-column:1/-1;">尚無科目成績</p>';
-    } else { alert("密碼錯誤"); }
-}
+    }
+
+    function manualEdit(id) {
+        const n = prompt("修改姓名：", db[id].name); 
+        if(n !== null) {
+            db[id].name = n;
+            refreshAdminTable();
+        }
+    }
+
+    function authStudent() {
+        const id = document.getElementById('s-id').value.trim();
+        const pw = document.getElementById('s-pwd').value.trim();
+        
+        if(!db[id]) return alert("找不到此學號，請聯絡老師上傳資料。");
+        
+        const sp = localStorage.getItem('sp_'+id) || id.slice(-3);
+        if(pw === sp) {
+            navTo('sec-s-report');
+            document.getElementById('res-name').innerText = db[id].name + " 同學";
+            document.getElementById('res-class').innerText = currentClass + " | 學號：" + id;
+            
+            // 排序邏輯
+            const allSubjs = Object.keys(db[id].scores);
+            const normalSubjs = allSubjs.filter(k => !k.includes("段考"));
+            const examSubjs = allSubjs.filter(k => k.includes("段考"));
+            const sortedSubjs = [...normalSubjs, ...examSubjs];
+
+            let html = '';
+            sortedSubjs.forEach(k => {
+                html += `<div class="score-item">
+                            <span class="subj-name">${k}</span>
+                            <span class="subj-score">${db[id].scores[k]}</span>
+                         </div>`;
+            });
+            document.getElementById('res-grid').innerHTML = html || '<p style="grid-column:1/-1;">尚無科目成績</p>';
+        } else { 
+            alert("密碼錯誤"); 
+        }
+    }
+
+    function modTPwd() { 
+        const p = prompt("設定新管理密碼："); 
+        if(p) { localStorage.setItem('m_pwd', p); masterPwd = p; alert("管理密碼已更新"); } 
+    }
+    
+    function modSPwd() { 
+        const id = document.getElementById('s-id').value.trim();
+        const p = prompt("設定新查詢密碼："); 
+        if(p) { localStorage.setItem('sp_'+id, p); alert("個人查詢密碼已更新"); } 
+    }
+    
+    function exportXlsx() {
+        try {
+            const out = [[currentClass], ["座號","學號","性別","姓名"]];
+            const ids = Object.keys(db); 
+            if(!ids.length) return alert("目前沒有資料可以匯出");
+            
+            // 抓取所有可能出現的科目並去重
+            let allSubjects = new Set();
+            ids.forEach(id => Object.keys(db[id].scores).forEach(s => allSubjects.add(s)));
+            const subjs = Array.from(allSubjects);
+            
+            out[1].push(...subjs);
+            ids.forEach(id => {
+                const s = db[id]; 
+                const row = ["-", id, s.sex, s.name];
+                subjs.forEach(sj => row.push(s.scores[sj] || '-'));
+                out.push(row);
+            });
+            
+            const ws = XLSX.utils.aoa_to_sheet(out);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "整合成績單");
+            XLSX.writeFile(wb, currentClass + "_備份.xlsx");
+        } catch (err) {
+            alert("匯出發生錯誤");
+        }
+    }
+</script>
+
+</body>
+</html>
